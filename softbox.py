@@ -94,6 +94,7 @@ class softbox_model_fn(object):
         self.marg_weight = params['marg_weight']
         self.reg_weight = params['reg_weight']
         self.regularization_method = params['regularization_method']
+
         self.temperature = 1.0
 
         self.min_embed, self.delta_embed = init_word_embedding(self.label_size, self.embed_dim)
@@ -169,10 +170,10 @@ def volume_calculation(mybox, temperature):
 
 def init_embedding_scale():
     # softbox delta log init
-    #  min_lower_scale, min_higher_scale = 1e-4, 0.9
-    #  delta_lower_scale, delta_higher_scale = -1.0, -0.1
     min_lower_scale, min_higher_scale = 1e-4, 0.9
-    delta_lower_scale, delta_higher_scale = -0.1, 0
+    delta_lower_scale, delta_higher_scale = -1.0, -0.1
+    # min_lower_scale, min_higher_scale = 1e-4, 0.9
+    # delta_lower_scale, delta_higher_scale = -0.1, 0
     return min_lower_scale, min_higher_scale, delta_lower_scale, delta_higher_scale
 
 def init_word_embedding(label_size, embed_dim):

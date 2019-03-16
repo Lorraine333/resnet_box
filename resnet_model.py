@@ -32,6 +32,8 @@ from __future__ import division
 from __future__ import print_function
 
 import tensorflow as tf
+from official.resnet import softbox
+from official.resnet.box import MyBox
 
 _BATCH_NORM_DECAY = 0.997
 _BATCH_NORM_EPSILON = 1e-5
@@ -426,6 +428,14 @@ class Model(object):
     self.dtype = dtype
     self.pre_activation = resnet_version == 2
 
+    self.embed_dim = 20
+    self.cond_weight = 1.0
+    self.marg_weight = 1.0
+    self.reg_weight = 0.001
+    self.temperature = 1.0
+    self.regularization_method = 'delta' # or universe_edge
+
+
   def _custom_dtype_getter(self, getter, name, shape=None, dtype=DEFAULT_DTYPE,
                            *args, **kwargs):
     """Creates variables in fp32, then casts to fp16 if necessary.
@@ -480,7 +490,47 @@ class Model(object):
     return tf.variable_scope('resnet_model',
                              custom_getter=self._custom_dtype_getter)
 
-  def __call__(self, inputs, training):
+  def get_cond_loss(self, cond_log_prob, labels):
+      """get conditional probability loss"""
+      cond_pos_loss = tf.multiply(cond_log_prob, labels)
+      cond_neg_loss = tf.multiply(tf.log(1-tf.exp(cond_log_prob)+1e-10), 1-labels)
+      cond_loss = -tf.reduce_mean(cond_pos_loss+ cond_neg_loss)
+      cond_loss = self.cond_weight * cond_loss
+      return cond_loss
+
+  def get_marg_loss(self, marg_log_prob, labels):
+      """get marginal probability loss"""
+      marg_pos_loss = tf.multiply(marg_log_prob, labels)
+      marg_neg_loss = tf.multiply(tf.log(1-tf.exp(marg_log_prob)+1e-10), 1-labels)
+      marg_loss = -tf.reduce_mean(marg_pos_loss+marg_neg_loss)
+      marg_loss = self.marg_weight * marg_loss
+      return marg_loss
+
+  def get_loss(self, log_prob, labels):
+    labels = tf.cast(labels, tf.float32)
+    prob_loss = tf.cond(tf.equal(tf.shape(labels)[1], tf.constant(self.num_classes)),
+                        true_fn=lambda: self.get_marg_loss(log_prob, labels),
+                        false_fn=lambda: self.get_cond_loss(log_prob, labels))
+
+    """get regularization loss"""
+    if self.regularization_method == 'universe_edge':
+        max_embed = self.min_embed + tf.exp(self.delta_embed)
+        universe_min = tf.reduce_min(self.min_embed, axis=0, keepdims=True)
+        universe_max = tf.reduce_max(max_embed, axis=0, keepdims=True)
+        regularization = tf.reduce_mean(
+            tf.nn.softplus(universe_max - universe_min))
+    elif self.regularization_method == 'delta':
+        regularization = tf.reduce_mean(
+            tf.square(tf.exp(self.delta_embed)))
+    else:
+        raise ValueError('Wrong regularization method')
+
+    total_loss = prob_loss + self.reg_weight * regularization
+    total_loss = tf.Print(total_loss, [prob_loss, self.reg_weight * regularization], 'loss')
+    return total_loss
+
+
+  def __call__(self, inputs, labels, training):
     """Add operations to classify a batch of input images.
 
     Args:
@@ -492,6 +542,44 @@ class Model(object):
       A logits Tensor with shape [<batch_size>, self.num_classes].
     """
 
+    self.min_embed, self.delta_embed = softbox.init_word_embedding(self.num_classes, self.embed_dim)
+
+    return tf.cond(tf.equal(tf.shape(inputs['image'])[1], 224),
+                   true_fn = lambda : self.resnet_call(inputs, training),
+                   false_fn=lambda : self.box_call(inputs, labels))
+
+  def box_call(self, inputs, labels):
+      return tf.cond(tf.equal(tf.shape(labels)[1], tf.constant(self.num_classes)),
+                     true_fn=lambda: self.marg_call(),
+                     false_fn=lambda: self.cond_call(inputs))
+
+  def cond_call(self, inputs):
+      t1x = inputs['term1']
+      t2x = inputs['term2']
+      t1x = tf.Print(t1x, [t1x, t2x], 't1x shape')
+      """cond log probability"""
+      t1_box = softbox.get_word_embedding(t1x, self.min_embed, self.delta_embed)
+      t2_box = softbox.get_word_embedding(t2x, self.min_embed, self.delta_embed)
+      evaluation_logits = softbox.get_conditional_probability(t1_box, t2_box, self.embed_dim, self.temperature)
+      evaluation_logits = tf.Print(evaluation_logits, [evaluation_logits], 'logit')
+      return evaluation_logits
+
+  def marg_call(self):
+      """marg log probability"""
+      max_embed = self.min_embed + tf.exp(self.delta_embed)
+      universe_min = tf.reduce_min(self.min_embed, axis=0, keepdims=True)
+      universe_max = tf.reduce_max(max_embed, axis=0, keepdims=True)
+      universe_volume = softbox.volume_calculation(MyBox(universe_min, universe_max), self.temperature)
+      box_volume = softbox.volume_calculation(MyBox(self.min_embed, max_embed), self.temperature)
+      predicted_marginal_logits = tf.log(box_volume) - tf.log(universe_volume)
+      predicted_marginal_logits = tf.expand_dims(predicted_marginal_logits, axis = 0)
+      return predicted_marginal_logits
+
+  def resnet_call(self, inputs, training):
+    inputs = inputs['image']
+    inputs = tf.cast(inputs, dtype=tf.float32)
+
+    inputs = tf.Print(inputs, [tf.shape(inputs)], 'shape', summarize=10)
     with self._model_variable_scope():
       if self.data_format == 'channels_first':
         # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).

@@ -35,6 +35,7 @@ _DEFAULT_IMAGE_SIZE = 224
 _NUM_CHANNELS = 3
 # _NUM_CLASSES = 1001
 _NUM_CLASSES = 80
+_NUM_COND_PROB = 5418
 
 # _NUM_IMAGES = {
 #     'train': 1281167,
@@ -43,17 +44,17 @@ _NUM_CLASSES = 80
 _NUM_IMAGES = {
     # 'train': 206,
     # 'validation': 8,
-    # 'train': 1,
-    # 'validation': 1,
+    'train': 1,
+    'validation': 1,
     # 2014 coco
-    'train': 82081, # 702 without annotation, 82783 examples, 81*1024=82944
-    'validation': 40137, #364 without anntations, 40501 examples, 413*128=40192
+    # 'train': 82081, # 702 without annotation, 82783 examples, 81*1024=82944
+    # 'validation': 40137, #364 without anntations, 40501 examples, 413*128=40192
 }
 
-_NUM_TRAIN_FILES = 1024
-_NUM_VALID_FILES = 128
-# _NUM_TRAIN_FILES = 1
-# _NUM_VALID_FILES = 1
+# _NUM_TRAIN_FILES = 1024
+# _NUM_VALID_FILES = 128
+_NUM_TRAIN_FILES = 1
+_NUM_VALID_FILES = 1
 _SHUFFLE_BUFFER = 10000
 
 # DATASET_NAME = 'ImageNet'
@@ -66,11 +67,13 @@ def get_filenames(is_training, data_dir):
   """Return filenames for dataset."""
   if is_training:
     return [
-        os.path.join(data_dir, 'train2014-%05d-of-%05d' % (i, _NUM_TRAIN_FILES))
+        # os.path.join(data_dir, 'train2014-%05d-of-%05d' % (i, _NUM_TRAIN_FILES))
+        os.path.join(data_dir, 'tinytinytiny_valid-%05d-of-%05d' % (i, _NUM_VALID_FILES))
         for i in range(_NUM_TRAIN_FILES)]
   else:
     return [
-        os.path.join(data_dir, 'val2014-%05d-of-%05d' % (i, _NUM_VALID_FILES))
+        # os.path.join(data_dir, 'val2014-%05d-of-%05d' % (i, _NUM_VALID_FILES))
+        os.path.join(data_dir, 'tinytinytiny_valid-%05d-of-%05d' % (i, _NUM_VALID_FILES))
         for i in range(_NUM_VALID_FILES)]
 
 
@@ -187,8 +190,12 @@ def parse_record(raw_record, is_training):
       output_width=_DEFAULT_IMAGE_SIZE,
       is_training=is_training)
   # image = tf.Print(image, [image, label], 'input', summarize=100)
-
-  return image, label
+  features_image = {'image': image,
+                    'idx': tf.zeros_like(label),
+                    'term1': tf.zeros_like(label),
+                    'term2': tf.zeros_like(label)}
+  label_dict = {'prob': label}
+  return features_image, label_dict
 
 
 def input_fn(is_training, data_dir, batch_size, num_epochs=1, num_gpus=None):
@@ -229,11 +236,6 @@ def input_fn(is_training, data_dir, batch_size, num_epochs=1, num_gpus=None):
       examples_per_epoch=_NUM_IMAGES['train'] if is_training else None
   )
 
-
-def get_synth_input_fn():
-  return resnet_run_loop.get_synth_input_fn(
-      _DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE, _NUM_CHANNELS, _NUM_CLASSES)
-
 def box_cond_input_fn(filename, batch_size, shuffle, epoch):
 
     def parse_cond_feature(raw_record):
@@ -251,6 +253,7 @@ def box_cond_input_fn(filename, batch_size, shuffle, epoch):
 
         features = tf.parse_single_example(raw_record, feature_map)
         return_features = {
+            'image': tf.zeros([32, 32, 3], dtype=tf.float32),
             'idx': tf.zeros_like(features['u']),
             'term1': features['u'],
             'term2': features['v']}
@@ -264,10 +267,10 @@ def box_cond_input_fn(filename, batch_size, shuffle, epoch):
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(epoch)
     dataset = dataset.prefetch(batch_size * 10)
+    # return dataset
 
     iterator = dataset.make_one_shot_iterator()
     return iterator.get_next()
-
 
 def box_marg_input_fn(filename, batch_size, shuffle, epoch):
     def parse_marg_feature(raw_record):
@@ -284,9 +287,11 @@ def box_marg_input_fn(filename, batch_size, shuffle, epoch):
             'marg_prob': tf.FixedLenFeature([80], dtype=tf.float32)}
         features = tf.parse_single_example(raw_record, feature_map)
 
-        return_features = {'idx': features['marg_idx'],
-                           'term1': tf.zeros_like(features['marg_idx']),
-                           'term2': tf.zeros_like(features['marg_idx'])}
+        return_features = {
+            'image': tf.zeros([32, 32, 3], dtype=tf.float32),
+            'idx': features['marg_idx'],
+            'term1': tf.zeros_like(features['marg_idx']),
+            'term2': tf.zeros_like(features['marg_idx'])}
         labels = {'prob': features['marg_prob']}
 
         return return_features, labels
@@ -301,6 +306,11 @@ def box_marg_input_fn(filename, batch_size, shuffle, epoch):
 
     iterator = dataset.make_one_shot_iterator()
     return iterator.get_next()
+    # return dataset
+
+def get_synth_input_fn():
+  return resnet_run_loop.get_synth_input_fn(
+      _DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE, _NUM_CHANNELS, _NUM_CLASSES)
 
 ###############################################################################
 # Running the model
@@ -401,9 +411,15 @@ def imagenet_model_fn(features, labels, mode, params):
       num_images=_NUM_IMAGES['train'], boundary_epochs=[30, 60, 80, 90],
       decay_rates=[1, 0.1, 0.01, 0.001, 1e-4], warmup=warmup, base_lr=base_lr)
 
-  return resnet_run_loop.resnet_model_fn(
-      features=features,
-      labels=labels,
+  def only_resnet_fn(input_var):
+      if 'resnet' in input_var:
+          return True
+      else:
+          return False
+
+  resnet_fn = resnet_run_loop.resnet_model_fn(
+      input_features=features,
+      input_labels=labels,
       mode=mode,
       model_class=ImagenetModel,
       resnet_size=params['resnet_size'],
@@ -413,10 +429,13 @@ def imagenet_model_fn(features, labels, mode, params):
       data_format=params['data_format'],
       resnet_version=params['resnet_version'],
       loss_scale=params['loss_scale'],
-      loss_filter_fn=None,
+      loss_filter_fn=only_resnet_fn,
       dtype=params['dtype'],
       fine_tune=params['fine_tune']
   )
+
+  return resnet_fn
+
 
 
 def define_imagenet_flags():
@@ -432,11 +451,22 @@ def run_imagenet(flags_obj):
   Args:
     flags_obj: An object containing parsed flag values.
   """
-  input_function = ((flags_obj.use_synthetic_data and get_synth_input_fn())
-                    or input_fn)
+  input_fns = []
+  if flags_obj.use_synthetic_data:
+      input_fns.append(get_synth_input_fn())
+# means using boxes
+  if flags_obj.model_method == 1:
+      input_fns.append(input_fn)
+  elif flags_obj.model_method > 1:
+      input_fns.append(input_fn)
+      input_fns.append(box_cond_input_fn)
+      input_fns.append(box_marg_input_fn)
+
+  else:
+      raise ValueError('invalid input for model method')
 
   resnet_run_loop.resnet_main(
-      flags_obj, imagenet_model_fn, input_function, DATASET_NAME,
+      flags_obj, imagenet_model_fn, input_fns, DATASET_NAME,
       shape=[_DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE, _NUM_CHANNELS])
 
 
