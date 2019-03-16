@@ -558,26 +558,26 @@ def resnet_main(
         # evaluate every 10 epochs
         for i in range(flags_obj.train_epochs):
             print('epoch', i)
-            # classifier.train(input_fn=lambda: input_fn_train(1),
-            #                      hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
-            # classifier.train(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
-            #                      hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
+            classifier.train(input_fn=lambda: input_fn_train(1),
+                                 hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
+            classifier.train(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
+                                 hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
             classifier.train(input_fn=lambda: input_fn_marg(flags_obj.marg_file, 80, True, 1),
                                  hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
             if i % 10 == 0:
                 tf.logging.info('Starting to evaluate.')
-                # eval_results = classifier.evaluate(input_fn=lambda: input_fn_eval(),
-                #                                steps=flags_obj.max_train_steps)
-                # benchmark_logger.log_evaluation_result(eval_results)
-                # eval_results = classifier.evaluate(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
-                #                     steps=flags_obj.max_train_steps)
-                # benchmark_logger.log_evaluation_result(eval_results)
-                # eval_results = classifier.evaluate(input_fn=lambda: input_fn_marg(flags_obj.marg_file, 80, True, 1),
-                #                     steps=flags_obj.max_train_steps)
-                # benchmark_logger.log_evaluation_result(eval_results)
-                # if model_helpers.past_stop_threshold(
-                #         flags_obj.stop_threshold, eval_results['accuracy']):
-                #     break
+                eval_results = classifier.evaluate(input_fn=lambda: input_fn_eval(),
+                                               steps=flags_obj.max_train_steps)
+                benchmark_logger.log_evaluation_result(eval_results)
+                eval_results = classifier.evaluate(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
+                                    steps=flags_obj.max_train_steps)
+                benchmark_logger.log_evaluation_result(eval_results)
+                eval_results = classifier.evaluate(input_fn=lambda: input_fn_marg(flags_obj.marg_file, 80, True, 1),
+                                    steps=flags_obj.max_train_steps)
+                benchmark_logger.log_evaluation_result(eval_results)
+                if model_helpers.past_stop_threshold(
+                        flags_obj.stop_threshold, eval_results['accuracy']):
+                    break
     else:
         raise ValueError('Invalid model method parameter')
 
