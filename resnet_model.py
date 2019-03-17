@@ -430,7 +430,7 @@ class Model(object):
 
     self.embed_dim = 20
     self.cond_weight = 1.0
-    self.marg_weight = 1.0
+    self.marg_weight = 0.0
     self.reg_weight = 0.001
     self.temperature = 1.0
     self.regularization_method = 'delta' # or universe_edge
@@ -530,7 +530,7 @@ class Model(object):
     return total_loss
 
 
-  def __call__(self, inputs, labels, training):
+  def __call__(self, inputs, image_features, labels):
     """Add operations to classify a batch of input images.
 
     Args:
@@ -541,11 +541,17 @@ class Model(object):
     Returns:
       A logits Tensor with shape [<batch_size>, self.num_classes].
     """
-
     self.min_embed, self.delta_embed = softbox.init_word_embedding(self.num_classes, self.embed_dim)
 
     return tf.cond(tf.equal(tf.shape(inputs['image'])[1], 224),
-                   true_fn = lambda : self.resnet_call(inputs, training),
+                   true_fn = lambda : self.resnet_call(image_features, labels),
+                   false_fn=lambda : self.box_call(inputs, labels))
+
+  def joint_model(self, inputs, image_features, labels):
+    self.min_embed, self.delta_embed = softbox.init_word_embedding(self.num_classes, self.embed_dim)
+
+    return tf.cond(tf.equal(tf.shape(inputs['image'])[1], 224),
+                   true_fn = lambda : self.get_image_box_logits(image_features),
                    false_fn=lambda : self.box_call(inputs, labels))
 
   def box_call(self, inputs, labels):
@@ -575,7 +581,68 @@ class Model(object):
       predicted_marginal_logits = tf.expand_dims(predicted_marginal_logits, axis = 0)
       return predicted_marginal_logits
 
+  def get_resnet_loss(self, logits, labels):
+      """Returns an input function that returns a dataset with zeroes.
+
+      This is useful in debugging input pipeline performance, as it removes all
+      elements of file reading and image preprocessing.
+
+      Args:
+          resnet_logits: resnet_logits for resnet output. Shape [batch_size, num_classes]
+          labels: one hot labels. Shape [batch_size, label_size]
+
+      Returns:
+          The loss function for resnet if model_method is 2
+      """
+      # image feature box volume
+      labels = tf.cast(labels, tf.float32)
+      # labels = tf.reshape(labels, [-1])
+      # logits = tf.reshape(logits, [-1])
+      # cond_pos_loss = tf.multiply(logits, labels)
+      # cond_neg_loss = tf.multiply(tf.log(1-tf.exp(logits)+1e-10), 1-labels)
+      # loss = -tf.reduce_mean(cond_pos_loss+ cond_neg_loss)
+      # loss = -tf.reduce_mean(cond_pos_loss)
+      loss = tf.losses.sigmoid_cross_entropy(multi_class_labels=labels, logits=logits)
+      return loss
+
+  def get_image_box_logits(self, image_features):
+      # labels = tf.Print(labels, [labels], 'label at resnet loss', summarize=100)
+      # self.image_feature = self.resnet_feature_call(inputs, training) # feature layer output [batch_size, 2048]
+      resnet_min_embed = tf.layers.dense(inputs=image_features, units=self.embed_dim) # [batch_size, 20]
+      resnet_delta_embed = tf.layers.dense(inputs =image_features, units = self.embed_dim) # [batch_size, 20]
+
+      resnet_min_embed = tf.tile(tf.expand_dims(resnet_min_embed, 1), [1, self.num_classes, 1])
+      resnet_min_embed = tf.reshape(resnet_min_embed, [-1, self.embed_dim]) #[batch_size * num_class, 20]
+
+      resnet_delta_embed = tf.tile(tf.expand_dims(resnet_delta_embed, 1), [1, self.num_classes, 1])
+      resnet_delta_embed = tf.reshape(resnet_delta_embed, [-1, self.embed_dim]) #[batch_size * num_class, 20]
+
+      # resnet_min_embed = tf.Print(resnet_min_embed, [tf.shape(resnet_min_embed)], 'after reshaping size', summarize=1000)
+
+      resnet_max_embed = resnet_min_embed + resnet_delta_embed
+      resnet_box = MyBox(resnet_min_embed, resnet_max_embed)
+
+      # box label
+      max_embed = self.min_embed + tf.exp(self.delta_embed) #[label_size, 20]
+      max_embed = tf.Print(max_embed, [tf.shape(image_features)], 'image feature shape')
+      min_embed = tf.tile(tf.expand_dims(self.min_embed, 0), [tf.shape(image_features)[0], 1, 1])
+      min_embed = tf.reshape(min_embed, [-1, self.embed_dim])
+
+      max_embed = tf.tile(tf.expand_dims(max_embed, 0), [tf.shape(image_features)[0], 1, 1])
+      max_embed = tf.reshape(max_embed, [-1, self.embed_dim])
+      # max_embed = tf.Print(max_embed, [tf.shape(max_embed), tf.shape(resnet_delta_embed), max_embed], 'box_label_shape after tile')
+      label_box = MyBox(min_embed, max_embed)
+
+      cond_log_prob = softbox.get_conditional_probability(resnet_box, label_box, self.embed_dim, self.temperature) #[batch_size * num_class]
+      cond_log_prob = tf.reshape(cond_log_prob, [-1, self.num_classes])
+      return cond_log_prob
+
   def resnet_call(self, inputs, training):
+      inputs = tf.layers.dense(inputs=inputs, units=self.num_classes)
+      inputs = tf.identity(inputs, 'final_dense')
+      return inputs
+
+  def resnet_feature_call(self, inputs, training):
     inputs = inputs['image']
     inputs = tf.cast(inputs, dtype=tf.float32)
 
@@ -635,6 +702,5 @@ class Model(object):
       inputs = tf.identity(inputs, 'final_reduce_mean')
 
       inputs = tf.reshape(inputs, [-1, self.final_size])
-      inputs = tf.layers.dense(inputs=inputs, units=self.num_classes)
-      inputs = tf.identity(inputs, 'final_dense')
+      self.image_feature = inputs
       return inputs

@@ -29,7 +29,6 @@ from official.utils.logs import logger
 from official.resnet import easier_preprocessing
 from official.resnet import resnet_model
 from official.resnet import resnet_run_loop
-from official.resnet import softbox
 
 _DEFAULT_IMAGE_SIZE = 224
 _NUM_CHANNELS = 3
@@ -44,17 +43,17 @@ _NUM_COND_PROB = 5418
 _NUM_IMAGES = {
     # 'train': 206,
     # 'validation': 8,
-    'train': 1,
-    'validation': 1,
+    # 'train': 1,
+    # 'validation': 1,
     # 2014 coco
-    # 'train': 82081, # 702 without annotation, 82783 examples, 81*1024=82944
-    # 'validation': 40137, #364 without anntations, 40501 examples, 413*128=40192
+    'train': 82081, # 702 without annotation, 82783 examples, 81*1024=82944
+    'validation': 40137, #364 without anntations, 40501 examples, 413*128=40192
 }
 
-# _NUM_TRAIN_FILES = 1024
-# _NUM_VALID_FILES = 128
-_NUM_TRAIN_FILES = 1
-_NUM_VALID_FILES = 1
+_NUM_TRAIN_FILES = 1024
+_NUM_VALID_FILES = 128
+# _NUM_TRAIN_FILES = 1
+# _NUM_VALID_FILES = 1
 _SHUFFLE_BUFFER = 10000
 
 # DATASET_NAME = 'ImageNet'
@@ -67,13 +66,13 @@ def get_filenames(is_training, data_dir):
   """Return filenames for dataset."""
   if is_training:
     return [
-        # os.path.join(data_dir, 'train2014-%05d-of-%05d' % (i, _NUM_TRAIN_FILES))
-        os.path.join(data_dir, 'tinytinytiny_valid-%05d-of-%05d' % (i, _NUM_VALID_FILES))
+        os.path.join(data_dir, 'train2014-%05d-of-%05d' % (i, _NUM_TRAIN_FILES))
+        # os.path.join(data_dir, 'tinytinytiny_valid-%05d-of-%05d' % (i, _NUM_VALID_FILES))
         for i in range(_NUM_TRAIN_FILES)]
   else:
     return [
-        # os.path.join(data_dir, 'val2014-%05d-of-%05d' % (i, _NUM_VALID_FILES))
-        os.path.join(data_dir, 'tinytinytiny_valid-%05d-of-%05d' % (i, _NUM_VALID_FILES))
+        os.path.join(data_dir, 'val2014-%05d-of-%05d' % (i, _NUM_VALID_FILES))
+        # os.path.join(data_dir, 'tinytinytiny_valid-%05d-of-%05d' % (i, _NUM_VALID_FILES))
         for i in range(_NUM_VALID_FILES)]
 
 
@@ -431,7 +430,8 @@ def imagenet_model_fn(features, labels, mode, params):
       loss_scale=params['loss_scale'],
       loss_filter_fn=only_resnet_fn,
       dtype=params['dtype'],
-      fine_tune=params['fine_tune']
+      fine_tune=params['fine_tune'],
+      model_method = params['model_method']
   )
 
   return resnet_fn

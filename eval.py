@@ -3,8 +3,8 @@ import numpy as np
 def mAP_func(y_true, y_pred):
     num_classes = y_true.shape[1]
     average_precisions = []
-    print('true', y_true.shape)
-    print('pred', y_pred.shape)
+    print('true', y_true)
+    print('pred', y_pred)
 
     for index in range(num_classes):
         pred = y_pred[:,index]
@@ -45,3 +45,30 @@ def mAP_func(y_true, y_pred):
         average_precisions.append(np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1]))
     # print('average precision', np.mean(average_precisions, dtype=np.float32))
     return np.mean(average_precisions, dtype=np.float32)
+
+def best_accuracy(y_pred, target):
+    y_pred = np.reshape(y_pred, (-1))
+    target = np.reshape(target, (-1))
+    # print(y_pred, target)
+    errs = -y_pred
+    # best_threshold choosing by maximizing accuracy
+    indices = np.argsort(errs)
+    sortedErrors = errs[indices]
+    sortedTarget = target[indices]
+    tp = np.cumsum(sortedTarget)
+    invSortedTarget = (sortedTarget == 0).astype('float32')
+    Nneg = invSortedTarget.sum()
+    fp = np.cumsum(invSortedTarget)
+    tn = fp * -1 + Nneg
+    accuracies = (tp + tn) / sortedTarget.shape[0]
+    i = accuracies.argmax()
+    print(i, tp[i], tn[i], sortedTarget.shape[0], accuracies[i])
+    # calculate recall precision and F1
+    Npos = sortedTarget.sum()
+    fn = tp * -1 + Npos
+    precision = tp/(tp + fp)
+    recall = tp/(tp + fn)
+    f1 = (2*precision[i]*recall[i])/(precision[i]+recall[i])
+    print("Best threshold", sortedErrors[i], "Accuracy:", accuracies[i], "Precision, Recall and F1 are %.5f %.5f %.5f" % (precision[i], recall[i], f1))
+    print("TP, FP, TN, FN are %.5f %.5f %.5f %.5f" % (tp[i], fp[i], tn[i], fn[i]))
+    return accuracies[i].astype(np.float32)

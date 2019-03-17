@@ -175,18 +175,18 @@ def learning_rate_with_decay(
   boundaries = [int(batches_per_epoch * epoch) for epoch in boundary_epochs]
   vals = [initial_learning_rate * decay for decay in decay_rates]
 
-  # def learning_rate_fn(global_step):
-  #   """Builds scaled learning rate function with 5 epoch warm up."""
-  #   lr = tf.train.piecewise_constant(global_step, boundaries, vals)
-  #   if warmup:
-  #     warmup_steps = int(batches_per_epoch * 5)
-  #     warmup_lr = (
-  #         initial_learning_rate * tf.cast(global_step, tf.float32) / tf.cast(
-  #             warmup_steps, tf.float32))
-  #     return tf.cond(global_step < warmup_steps, lambda: warmup_lr, lambda: lr)
-  #   return lr
   def learning_rate_fn(global_step):
-      return 0.1
+    """Builds scaled learning rate function with 5 epoch warm up."""
+    lr = tf.train.piecewise_constant(global_step, boundaries, vals)
+    if warmup:
+      warmup_steps = int(batches_per_epoch * 5)
+      warmup_lr = (
+          initial_learning_rate * tf.cast(global_step, tf.float32) / tf.cast(
+              warmup_steps, tf.float32))
+      return tf.cond(global_step < warmup_steps, lambda: warmup_lr, lambda: lr)
+    return lr
+  # def learning_rate_fn(global_step):
+  #     return 0.0001
 
   return learning_rate_fn
 
@@ -195,7 +195,7 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
                     resnet_size, weight_decay, learning_rate_fn, momentum,
                     data_format, resnet_version, loss_scale,
                     loss_filter_fn=None, dtype=resnet_model.DEFAULT_DTYPE,
-                    fine_tune=False):
+                    fine_tune=False, model_method=1):
   """Shared functionality for different resnet model_fns.
 
   Initializes the ResnetModel representing the model layers
@@ -238,13 +238,22 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   # Generate a summary node for the images
   image_features = input_features['image']
   labels = input_labels['prob']
+  # labels = tf.Print(labels, [labels], 'labels', summarize=100)
   tf.summary.image('images', image_features, max_outputs=6)
 
 
   model = model_class(resnet_size, data_format, resnet_version=resnet_version,
                       dtype=dtype)
+  resnet_image_features = model.resnet_feature_call(input_features, mode == tf.estimator.ModeKeys.TRAIN)
 
-  logits = model(input_features, labels, mode == tf.estimator.ModeKeys.TRAIN)
+  if model_method ==1:
+      logits = model(input_features, resnet_image_features, labels)
+  elif model_method == 2:
+      print('joint model')
+      logits = model.joint_model(input_features, resnet_image_features, labels)
+  else:
+      raise ValueError('invalid input for model method')
+
 
   # This acts as a no-op if the logits are already in fp32 (provided logits are
   # not a SparseTensor). If dtype is is low precision, logits must be cast to
@@ -279,10 +288,17 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   #     logits=logits, labels=labels)
   # labels = tf.Print(labels, [labels, logits], 'input to loss function', summarize=1000)
 
+  if model_method == 1:
+      model_loss =  tf.cond(tf.equal(tf.shape(image_features)[1], 224),
+                            true_fn = lambda : tf.losses.sigmoid_cross_entropy(multi_class_labels=labels, logits=logits),
+                            false_fn= lambda : model.get_loss(logits, labels))
+  elif model_method == 2:
+      model_loss =  tf.cond(tf.equal(tf.shape(image_features)[1], 224),
+                            true_fn = lambda : model.get_resnet_loss(logits, labels),
+                            false_fn= lambda : model.get_loss(logits, labels))
+  else:
+      raise ValueError('invalid input for model method')
 
-  model_loss =  tf.cond(tf.equal(tf.shape(image_features)[1], 224),
-                   true_fn = lambda : tf.losses.sigmoid_cross_entropy(multi_class_labels=labels, logits=logits),
-                   false_fn= lambda : model.get_loss(logits, labels))
   model_loss = tf.Print(model_loss, [tf.shape(logits)], 'logits shape')
   # Create a tensor named cross_entropy for logging purposes.
   tf.identity(model_loss, name='model_loss')
@@ -295,13 +311,13 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   loss_filter_fn = loss_filter_fn or exclude_batch_norm
 
   # # Add weight decay to the loss.
-  # l2_loss = weight_decay * tf.add_n(
-  #     # loss is computed using fp32 for numerical stability.
-  #     [tf.nn.l2_loss(tf.cast(v, tf.float32)) for v in tf.trainable_variables()
-  #      if loss_filter_fn(v.name)])
-  # tf.summary.scalar('l2_loss', l2_loss)
-  # loss = model_loss + l2_loss
-  loss = model_loss
+  l2_loss = weight_decay * tf.add_n(
+      # loss is computed using fp32 for numerical stability.
+      [tf.nn.l2_loss(tf.cast(v, tf.float32)) for v in tf.trainable_variables()
+       if loss_filter_fn(v.name)])
+  tf.summary.scalar('l2_loss', l2_loss)
+  loss = model_loss + l2_loss
+  # loss = model_loss
 
   if mode == tf.estimator.ModeKeys.TRAIN:
 
@@ -353,7 +369,9 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
           if 'resnet' not in v.name:
               print(v)
               box_vars.append((g, v))
-      loss = tf.Print(loss, [tf.reduce_mean(box_vars[0][0]), tf.reduce_mean(box_vars[1][0])], 'box var', summarize=12)
+      loss = tf.Print(loss, [tf.reduce_mean(box_vars[0][0]), tf.reduce_mean(box_vars[1][0]), tf.reduce_mean(box_vars[2][0])], 'box var', summarize=12)
+      loss = tf.Print(loss, [loss], 'box var', summarize=12)
+
       # print(box_vars)
       # grad_vars = tf.Print(grad_vars,[grad_vars], summarize=1000)
       # tf.summary.scalar('gradients/AddN_2_0', tf.reduce_mean(grad_vars[0][0])) # 2048*80
@@ -393,6 +411,7 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   precision = tf.metrics.precision(tf.cast(labels, dtype=tf.int64), predictions['classes'])
   recall = tf.metrics.recall(tf.cast(labels, dtype=tf.int64), predictions['classes'])
   mAP = tf.py_func(eval.mAP_func, [tf.cast(labels, dtype=tf.int64), predictions['probabilities']], tf.float32)
+  best_thres_accu = tf.py_func(eval.best_accuracy, [predictions['probabilities'], tf.cast(labels, dtype=tf.int64)], tf.float32)
   correlation =tf.contrib.metrics.streaming_pearson_correlation(predictions=predictions['real_prob'], labels=tf.cast(labels, tf.float32))
 
 
@@ -413,7 +432,9 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   tf.identity(recall, name='train_recall')
   tf.identity(mAP, name='train_map')
   tf.identity(correlation, name='train_correlation')
+  tf.identity(accuracy, name='train_best_thres_accuracy')
   correlation = tf.Print(correlation, [correlation[1]], 'correlation score')
+
 
   # tf.identity(f1, name='train_f1')
   # tf.identity(mAP, name='train_map')
@@ -426,6 +447,7 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   tf.summary.scalar('train_f1', (2*(precision[1]*recall[1])/(precision[1]+recall[1]+1e-5)))
   tf.summary.scalar('train_map', mAP)
   tf.summary.scalar('train_correlation', correlation[1])
+  tf.summary.scalar('train_best_accuracy', best_thres_accu)
 
   return tf.estimator.EstimatorSpec(
       mode=mode,
@@ -471,7 +493,8 @@ def resnet_main(
             'resnet_version': int(flags_obj.resnet_version),
             'loss_scale': flags_core.get_loss_scale(flags_obj),
             'dtype': flags_core.get_tf_dtype(flags_obj),
-            'fine_tune': flags_obj.fine_tune
+            'fine_tune': flags_obj.fine_tune,
+            'model_method': flags_obj.model_method
         })
 
     run_params = {
@@ -560,24 +583,24 @@ def resnet_main(
             print('epoch', i)
             classifier.train(input_fn=lambda: input_fn_train(1),
                                  hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
-            classifier.train(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
-                                 hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
-            classifier.train(input_fn=lambda: input_fn_marg(flags_obj.marg_file, 80, True, 1),
-                                 hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
+            # classifier.train(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
+            #                      hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
+            # classifier.train(input_fn=lambda: input_fn_marg(flags_obj.marg_file, 80, True, 1),
+            #                      hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
             if i % 10 == 0:
                 tf.logging.info('Starting to evaluate.')
-                eval_results = classifier.evaluate(input_fn=lambda: input_fn_eval(),
-                                               steps=flags_obj.max_train_steps)
-                benchmark_logger.log_evaluation_result(eval_results)
-                eval_results = classifier.evaluate(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
-                                    steps=flags_obj.max_train_steps)
-                benchmark_logger.log_evaluation_result(eval_results)
-                eval_results = classifier.evaluate(input_fn=lambda: input_fn_marg(flags_obj.marg_file, 80, True, 1),
-                                    steps=flags_obj.max_train_steps)
-                benchmark_logger.log_evaluation_result(eval_results)
-                if model_helpers.past_stop_threshold(
-                        flags_obj.stop_threshold, eval_results['accuracy']):
-                    break
+                # eval_results = classifier.evaluate(input_fn=lambda: input_fn_eval(),
+                #                                steps=flags_obj.max_train_steps)
+                # benchmark_logger.log_evaluation_result(eval_results)
+                # eval_results = classifier.evaluate(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
+                #                     steps=flags_obj.max_train_steps)
+                # benchmark_logger.log_evaluation_result(eval_results)
+                # eval_results = classifier.evaluate(input_fn=lambda: input_fn_marg(flags_obj.marg_file, 80, True, 1),
+                #                     steps=flags_obj.max_train_steps)
+                # benchmark_logger.log_evaluation_result(eval_results)
+                # if model_helpers.past_stop_threshold(
+                #         flags_obj.stop_threshold, eval_results['accuracy']):
+                #     break
     else:
         raise ValueError('Invalid model method parameter')
 
