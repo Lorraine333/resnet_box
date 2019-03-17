@@ -484,7 +484,7 @@ def resnet_main(
     if flags_obj.pretrained_model_checkpoint_path is not None:
         warm_start_settings = tf.estimator.WarmStartSettings(
             flags_obj.pretrained_model_checkpoint_path,
-            vars_to_warm_start='^(?!.*dense)')
+            vars_to_warm_start='resnet_model.(?!.*dense)')
     else:
         warm_start_settings = None
 

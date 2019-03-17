@@ -422,7 +422,7 @@ def imagenet_model_fn(features, labels, mode, params):
       mode=mode,
       model_class=ImagenetModel,
       resnet_size=params['resnet_size'],
-      weight_decay=1e-3,
+      weight_decay=1e-4,
       learning_rate_fn=learning_rate_fn,
       momentum=0.9,
       data_format=params['data_format'],
