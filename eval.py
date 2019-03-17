@@ -3,8 +3,8 @@ import numpy as np
 def mAP_func(y_true, y_pred):
     num_classes = y_true.shape[1]
     average_precisions = []
-    print('true', y_true)
-    print('pred', y_pred)
+    # print('true', y_true)
+    # print('pred', y_pred)
 
     for index in range(num_classes):
         pred = y_pred[:,index]

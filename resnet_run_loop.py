@@ -268,6 +268,7 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   predictions = {
       'classes': tf.round(tf.nn.sigmoid(logits)),
       'probabilities': tf.nn.sigmoid(logits, name='sigmoid_tensor'),
+      'real_classes' : tf.round(tf.exp(logits)),
       'real_prob': tf.exp(logits)
   }
 
@@ -299,7 +300,7 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   else:
       raise ValueError('invalid input for model method')
 
-  model_loss = tf.Print(model_loss, [tf.shape(logits)], 'logits shape')
+  # model_loss = tf.Print(model_loss, [tf.shape(logits)], 'logits shape')
   # Create a tensor named cross_entropy for logging purposes.
   tf.identity(model_loss, name='model_loss')
   tf.summary.scalar('loss', model_loss)
@@ -364,13 +365,13 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
       grad_vars = optimizer.compute_gradients(loss)
       if fine_tune:
         grad_vars = _dense_grad_filter(grad_vars)
-      box_vars = []
-      for (g, v) in grad_vars:
-          if 'resnet' not in v.name:
-              print(v)
-              box_vars.append((g, v))
-      loss = tf.Print(loss, [tf.reduce_mean(box_vars[0][0]), tf.reduce_mean(box_vars[1][0]), tf.reduce_mean(box_vars[2][0])], 'box var', summarize=12)
-      loss = tf.Print(loss, [loss], 'box var', summarize=12)
+      # box_vars = []
+      # for (g, v) in grad_vars:
+      #     if 'resnet' not in v.name:
+      #         print(v)
+      #         box_vars.append((g, v))
+      # loss = tf.Print(loss, [tf.reduce_mean(box_vars[0][0]), tf.reduce_mean(box_vars[1][0]), tf.reduce_mean(box_vars[2][0])], 'box var', summarize=12)
+      # loss = tf.Print(loss, [loss], 'box var', summarize=12)
 
       # print(box_vars)
       # grad_vars = tf.Print(grad_vars,[grad_vars], summarize=1000)
@@ -405,24 +406,30 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   # predictions['classes'] = tf.Print(predictions['classes'], [tf.boolean_mask(predictions['probabilities'], tf.not_equal(predictions['classes'], zero_float))], 'predictions', summarize=3000)
 
   # threshold 0.5
-  accuracy = tf.metrics.accuracy(labels, predictions['classes'])
-  auc = tf.metrics.auc(labels, predictions['probabilities'])
-  micro_f1 = tf.contrib.metrics.f1_score(labels, predictions['probabilities'])
-  precision = tf.metrics.precision(tf.cast(labels, dtype=tf.int64), predictions['classes'])
-  recall = tf.metrics.recall(tf.cast(labels, dtype=tf.int64), predictions['classes'])
-  mAP = tf.py_func(eval.mAP_func, [tf.cast(labels, dtype=tf.int64), predictions['probabilities']], tf.float32)
-  best_thres_accu = tf.py_func(eval.best_accuracy, [predictions['probabilities'], tf.cast(labels, dtype=tf.int64)], tf.float32)
-  correlation =tf.contrib.metrics.streaming_pearson_correlation(predictions=predictions['real_prob'], labels=tf.cast(labels, tf.float32))
+  if model_method == 1:
+      pred_class = predictions['classes']
+      pred_probability = predictions['probabilities']
+  elif model_method == 2:
+      pred_class = predictions['real_classes']
+      pred_probability = predictions['real_prob']
+  else:
+      raise ValueError('Invalid model method')
 
+  accuracy = tf.metrics.accuracy(labels, pred_class)
+  auc = tf.metrics.auc(labels, pred_probability)
+  micro_f1 = tf.contrib.metrics.f1_score(labels, pred_probability)
+  precision = tf.metrics.precision(tf.cast(labels, dtype=tf.int64), pred_class)
+  recall = tf.metrics.recall(tf.cast(labels, dtype=tf.int64), pred_class)
+  mAP = tf.py_func(eval.mAP_func, [tf.cast(labels, dtype=tf.int64), pred_probability], tf.float32)
+  best_thres_accu = tf.py_func(eval.best_accuracy, [pred_probability, tf.cast(labels, dtype=tf.int64)], tf.float32)
+  correlation =tf.contrib.metrics.streaming_pearson_correlation(predictions=pred_probability, labels=tf.cast(labels, tf.float32))
 
   metrics = {'accuracy': accuracy,
              'precision':precision,
              'recall': recall,
-             # 'f1': f1,
              'micro_f1': micro_f1,
              'auc': auc,
              'pearson_correlation': correlation}
-             # 'mAP': mAP}
 
   # Create a tensor named train_accuracy for logging purposes
   tf.identity(accuracy, name='train_accuracy')
@@ -432,12 +439,9 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   tf.identity(recall, name='train_recall')
   tf.identity(mAP, name='train_map')
   tf.identity(correlation, name='train_correlation')
-  tf.identity(accuracy, name='train_best_thres_accuracy')
-  correlation = tf.Print(correlation, [correlation[1]], 'correlation score')
+  tf.identity(best_thres_accu, name='train_best_thres_accuracy')
+  # for no streaming metric, print them out for each epoch
 
-
-  # tf.identity(f1, name='train_f1')
-  # tf.identity(mAP, name='train_map')
   # write to summary
   tf.summary.scalar('train_accuracy', accuracy[1])
   tf.summary.scalar('train_auc', auc[1])
@@ -445,9 +449,9 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
   tf.summary.scalar('train_precision', precision[1])
   tf.summary.scalar('train_recall', recall[1])
   tf.summary.scalar('train_f1', (2*(precision[1]*recall[1])/(precision[1]+recall[1]+1e-5)))
-  tf.summary.scalar('train_map', mAP)
   tf.summary.scalar('train_correlation', correlation[1])
   tf.summary.scalar('train_best_accuracy', best_thres_accu)
+  tf.summary.scalar('train_map', mAP)
 
   return tf.estimator.EstimatorSpec(
       mode=mode,

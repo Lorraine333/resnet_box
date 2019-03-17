@@ -562,12 +562,12 @@ class Model(object):
   def cond_call(self, inputs):
       t1x = inputs['term1']
       t2x = inputs['term2']
-      t1x = tf.Print(t1x, [t1x, t2x], 't1x shape')
+      # t1x = tf.Print(t1x, [t1x, t2x], 't1x shape')
       """cond log probability"""
       t1_box = softbox.get_word_embedding(t1x, self.min_embed, self.delta_embed)
       t2_box = softbox.get_word_embedding(t2x, self.min_embed, self.delta_embed)
       evaluation_logits = softbox.get_conditional_probability(t1_box, t2_box, self.embed_dim, self.temperature)
-      evaluation_logits = tf.Print(evaluation_logits, [evaluation_logits], 'logit')
+      # evaluation_logits = tf.Print(evaluation_logits, [evaluation_logits], 'logit')
       return evaluation_logits
 
   def marg_call(self):
@@ -624,7 +624,7 @@ class Model(object):
 
       # box label
       max_embed = self.min_embed + tf.exp(self.delta_embed) #[label_size, 20]
-      max_embed = tf.Print(max_embed, [tf.shape(image_features)], 'image feature shape')
+      # max_embed = tf.Print(max_embed, [tf.shape(image_features)], 'image feature shape')
       min_embed = tf.tile(tf.expand_dims(self.min_embed, 0), [tf.shape(image_features)[0], 1, 1])
       min_embed = tf.reshape(min_embed, [-1, self.embed_dim])
 
@@ -646,7 +646,7 @@ class Model(object):
     inputs = inputs['image']
     inputs = tf.cast(inputs, dtype=tf.float32)
 
-    inputs = tf.Print(inputs, [tf.shape(inputs)], 'shape', summarize=10)
+    # inputs = tf.Print(inputs, [tf.shape(inputs)], 'shape', summarize=10)
     with self._model_variable_scope():
       if self.data_format == 'channels_first':
         # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).
