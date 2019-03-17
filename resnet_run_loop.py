@@ -316,6 +316,7 @@ def resnet_model_fn(input_features, input_labels, mode, model_class,
       # loss is computed using fp32 for numerical stability.
       [tf.nn.l2_loss(tf.cast(v, tf.float32)) for v in tf.trainable_variables()
        if loss_filter_fn(v.name)])
+  # print([v for v in tf.trainable_variables() if loss_filter_fn(v.name)])
   tf.summary.scalar('l2_loss', l2_loss)
   loss = model_loss + l2_loss
   # loss = model_loss
@@ -588,23 +589,23 @@ def resnet_main(
             classifier.train(input_fn=lambda: input_fn_train(1),
                                  hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
             # classifier.train(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
-            #                      hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
+                                 # hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
             # classifier.train(input_fn=lambda: input_fn_marg(flags_obj.marg_file, 80, True, 1),
             #                      hooks=[train_hooks], max_steps=flags_obj.max_train_steps)
             if i % 10 == 0:
                 tf.logging.info('Starting to evaluate.')
-                # eval_results = classifier.evaluate(input_fn=lambda: input_fn_eval(),
-                #                                steps=flags_obj.max_train_steps)
-                # benchmark_logger.log_evaluation_result(eval_results)
+                eval_results = classifier.evaluate(input_fn=lambda: input_fn_eval(),
+                                               steps=flags_obj.max_train_steps)
+                benchmark_logger.log_evaluation_result(eval_results)
                 # eval_results = classifier.evaluate(input_fn=lambda: input_fn_cond(flags_obj.cond_file, 5418, False, 1),
-                #                     steps=flags_obj.max_train_steps)
+                                    # steps=flags_obj.max_train_steps)
                 # benchmark_logger.log_evaluation_result(eval_results)
                 # eval_results = classifier.evaluate(input_fn=lambda: input_fn_marg(flags_obj.marg_file, 80, True, 1),
                 #                     steps=flags_obj.max_train_steps)
                 # benchmark_logger.log_evaluation_result(eval_results)
-                # if model_helpers.past_stop_threshold(
-                #         flags_obj.stop_threshold, eval_results['accuracy']):
-                #     break
+                if model_helpers.past_stop_threshold(
+                        flags_obj.stop_threshold, eval_results['accuracy']):
+                    break
     else:
         raise ValueError('Invalid model method parameter')
 

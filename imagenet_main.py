@@ -411,7 +411,7 @@ def imagenet_model_fn(features, labels, mode, params):
       decay_rates=[1, 0.1, 0.01, 0.001, 1e-4], warmup=warmup, base_lr=base_lr)
 
   def only_resnet_fn(input_var):
-      if 'resnet' in input_var:
+      if 'resnet' in input_var and 'batch_normalization' not in input_var:
           return True
       else:
           return False
